@@ -1,0 +1,88 @@
+# 结构阶梯（Ladder）
+
+## 这个目录是干什么的
+
+按「从 Bigram 一路搭到 GPT」的教学路径，**手写**出 Transformer 的每一个零件。
+参考路线来自 Karpathy 的 *Let's build GPT* 系列与 Kimi 给的分级方案。
+
+**为什么不单独开一个仓库、而是放进 MiniQwen 里：**
+
+1. 这个阶梯天然产出 **4 个基线模型**（Bigram / 单头注意力 / 多头 GPT-2 / Qwen2 结构），
+   而 MiniQwen 的评测阶段本来就需要一组消融基线——**顺手就有了，不用另做一遍**。
+2. 一个打磨好的仓库，胜过三个半成品仓库。面试官点进来只该看到一个故事。
+3. `ladder/` 里每一级的 loss 记录，直接变成 README 里那张「我从零搭上来」的表。
+
+语料用 `tinyshakespeare`（公有领域英文，1.1 MB，词表 65）：
+**小、快、干净**，CPU 上几秒就能看出 loss 变化，反馈最快。
+打完阶梯再把同一套代码换成中文语料 + Qwen2 组件。
+
+## 六级阶梯
+
+| 级 | 文件 | 新增的零件 | 验收标准 | 记录 loss |
+|---|---|---|---|---|
+| **L0** | `l0_data.py` | 字符级 tokenizer、`get_batch` | 打印的 x/y 确认 **y 是 x 右移一位**；roundtrip 无损 | — |
+| **L1** | `l1_bigram.py` | 只有 Embedding + 一个 Linear | 能生成"像英文的乱码"；loss 从 4.17 降到 ~2.5 | |
+| **L2** | `l2_single_head.py` | Q/K/V、缩放点积、**因果 mask**、手写 softmax | **手推矩阵形状全对**；改未来的 token，前面的输出不变 | |
+| **L3** | `l3_multihead.py` | 多头拼接 + FFN + Block + 残差 | loss 明显低于 L1 | |
+| **L4** | `l4_gpt.py` | LayerNorm（Pre-LN）+ 位置编码 = 完整 GPT-2 | 训练收敛，生成"莎士比亚味的英文" | |
+| **L5** | `l5_train.py` | 采样（temperature / top-k） | 能看出人名、对话格式 | |
+| **L6** | → 接 `miniqwen/model.py` | **换成 Qwen2 组件**：RMSNorm / RoPE / SwiGLU / GQA / 权重绑定 | 同数据同步数对比 L4 | |
+
+### L6 是合并点
+
+L4 是「2018 年的 GPT-2 结构」，L6 是「2024 年的 Qwen2 结构」。
+**同一份数据、同一个训练脚本、同样的步数**，只换零件——这张对比表就是
+「为什么现代 LLM 都用 RMSNorm/RoPE/SwiGLU/GQA」的第一手证据。
+
+原来这张表排在评测阶段（第 6 周）才做，现在打阶梯的时候顺手就产出了。
+
+## 每级都要记录 loss
+
+阶梯的价值一半在 loss 表里。每完成一级，把数字填进下表：
+
+| 级 | 参数量 | train loss | val loss | 备注 |
+|---|---:|---:|---:|---|
+| 随机基线 | 0 | 4.174 (= ln 65) | 4.174 | 纯猜 |
+| L1 Bigram | | | | |
+| L2 单头注意力 | | | | |
+| L3 多头 + FFN | | | | |
+| L4 完整 GPT-2 | | | | |
+| L6 Qwen2 结构 | | | | |
+
+> `4.174 = ln(65)` 是**理论下界**：词表 65，均匀乱猜的交叉熵就是这个数。
+> 任何模型第一件事就是先打败它——这也解释了为什么后面中文语的 BPE 词表
+> 越大，初始 loss 越高（16k 词表的随机基线是 ln(16384) ≈ 9.7）。
+
+## 三条纪律
+
+1. **先自己写，卡住再对照视频**。看完视频再敲一遍等于没写。
+2. **每一级都要能单独跑通**，不许"写完整个 GPT 再回头调"。
+3. **形状不对就别继续往下写**。attention 的 bug 不会报错，
+   只会让 loss 不动或者模型变傻。手推形状、打印 shape 是最便宜的调试手段。
+
+## 数据
+
+`data/input.txt` 是 tinyshakespeare（公有领域），已下载好，可直接提交到仓库。
+
+来源与获取方式（注意：**`raw.githubusercontent.com` 在本机被墙**，必须走代理）：
+
+```powershell
+# 正确地址来自 karpathy/char-rnn 仓库（nanoGPT 的 prepare.py 用的也是它）
+curl.exe -L -o ladder/data/input.txt `
+  "https://gh-proxy.com/https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt"
+```
+
+> ⚠️ 网上流传的一些地址（例如 `karpathy/char-level-gpt`）**这个仓库根本不存在**，
+> 加上域名被墙，会连错两次。
+
+## 环境
+
+**不要**为了这个阶梯去装 CPU 版 torch：
+
+```powershell
+# ❌ 千万别跑这条：会把已经装好的 GPU 版降级，RTX 5060 立刻失效
+# py -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+```
+
+本机已有 `torch 2.14.1+cu130`（已接上 RTX 5060），直接用它。
+阶梯的模型都很小，GPU 上跑得比 CPU 还快，而且**顺便验证了 GPU 通路**。
