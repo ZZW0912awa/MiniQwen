@@ -1,0 +1,19 @@
+# 统一换行符：仓库内一律 LF。
+# 否则 Windows 的 git（core.autocrlf=true）会对每个文件报
+# "LF will be replaced by CRLF"，长期还会产生整文件级别的虚假 diff。
+* text=auto eol=lf
+
+# Windows 脚本例外
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+*.ps1  text eol=crlf
+
+# 二进制文件不做任何转换
+*.bin         binary
+*.pt          binary
+*.pth         binary
+*.safetensors binary
+*.whl         binary
+
+# 语料与词表在 diff 里不展开
+data/tokenizer/*.json linguist-generated=true
