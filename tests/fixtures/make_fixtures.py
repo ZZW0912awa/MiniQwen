@@ -80,6 +80,19 @@ BOOK_C = """《测试之书丙》
 短段。
 """
 
+# ---------------- 丁：UTF-16（自带 BOM），测试 BOM 分支 ----------------
+# Python 的 text.encode("utf-16") 会自动加 BOM，所以这条用例不需要手工拼字节。
+BOOK_D = """《测试之书丁》
+
+第一章 编码
+
+这一本用 UTF-16 保存。
+
+第二章 结束
+
+编码探测必须靠 BOM 显式判断，不能靠 try/except 硬试。
+"""
+
 
 def write(path: Path, text: str, encoding: str, bom: bool = False) -> None:
     data = text.encode(encoding)
@@ -95,6 +108,7 @@ def main() -> None:
     write(FIXTURE_DIR / "book_a_utf8.txt", BOOK_A, "utf-8")
     write(FIXTURE_DIR / "book_b_gbk.txt", BOOK_B, "gbk")
     write(FIXTURE_DIR / "book_c_utf8_bom.txt", BOOK_C, "utf-8", bom=True)
+    write(FIXTURE_DIR / "book_d_utf16.txt", BOOK_D, "utf-16")
     print("完成。注意 book_b 是 GBK，编辑器打开可能是乱码，这是故意的。")
 
 

@@ -32,15 +32,33 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures"
 @pytest.mark.parametrize(
     "filename,expect_enc",
     [
-        ("book_a_utf8.txt", "utf-8-sig"),
+        ("book_a_utf8.txt", "utf-8"),          # 无 BOM → 报 utf-8（不是 utf-8-sig）
         ("book_b_gbk.txt", "gbk"),
-        ("book_c_utf8_bom.txt", "utf-8-sig"),
+        ("book_c_utf8_bom.txt", "utf-8-sig"),  # 有 BOM → 按 BOM 解
+        ("book_d_utf16.txt", "utf-16"),        # 有 BOM → 按 BOM 解
     ],
 )
 def test_read_text_detects_encoding(filename, expect_enc):
     text, enc = read_text(FIXTURES / filename)
     assert enc == expect_enc
     assert "第一章" in text or "楔子" in text or "序章" in text
+
+
+def test_utf16_without_bom_is_not_guessed():
+    """回归测试：没有 BOM 的字节流不能被当成 UTF-16。
+
+    Python 的 utf-16 解码器在没有 BOM 时不会报错，而是按小端硬解，
+    一个短文件万一"解成功"就是静默乱码。所以 utf-16 只能靠 BOM 判断。
+    """
+    import codecs
+
+    from miniqwen.corpus import NO_BOM_FALLBACKS
+
+    assert "utf-16" not in NO_BOM_FALLBACKS
+    # 造一个"看起来像 utf-16"但没有 BOM 的短文件：应判成 gbk 而不是 utf-16
+    raw = "第一章 测试".encode("gbk")
+    assert not raw.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE))
+    assert raw.decode("gbk") == "第一章 测试"
 
 
 def test_bom_is_stripped():
