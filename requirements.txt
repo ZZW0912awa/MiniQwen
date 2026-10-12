@@ -1,0 +1,19 @@
+# 说明见 README「环境安装」一节。
+#
+# ⚠️ CUDA 版 torch 在 PyPI 上不存在（PyPI 分发的 Windows 版是 CPU 版 +cpu），
+#   所以必须额外挂上 PyTorch 官方索引。RTX 50 系是 Blackwell 架构（sm_120），
+#   需要 CUDA 12.8 以上的轮子，否则会报
+#   "no kernel image is available for execution on the device"。
+#
+# 国内直连 pypi.org 慢，故额外挂清华镜像。
+--extra-index-url https://download.pytorch.org/whl/cu130
+--extra-index-url https://pypi.tuna.tsinghua.edu.cn/simple
+
+torch==2.14.1+cu130
+
+# 其余依赖
+numpy>=2.0
+tqdm>=4.66
+tokenizers>=0.20      # 生产版 BPE（Rust 实现），教学版见 scripts/bpe_from_scratch.py
+matplotlib>=3.8       # 画 loss 曲线
+pytest>=8.0           # 单元测试

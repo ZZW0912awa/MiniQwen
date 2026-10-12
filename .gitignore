@@ -1,0 +1,30 @@
+# ============ 数据：体积大 + 版权风险，绝不提交 ============
+# 保留 data/sample/ 与 data/tokenizer/（脚本 + 样例 + 分词器）
+data/raw/
+data/processed/
+
+# ============ 模型权重 ============
+checkpoints/
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.bin
+
+# ============ Python ============
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# ============ 实验产物与日志 ============
+runs/
+logs/
+*.log
+wandb/
+lightning_logs/
