@@ -31,7 +31,7 @@ from pathlib import Path
 if hasattr(sys.stdout, "reconfigure"):
     try:
         sys.stdout.reconfigure(encoding="utf-8")
-    except Exception:
+    except Exception: 
         pass
 
 # 让脚本能 import 到 miniqwen 包（脚本在 scripts/ 下，包在上一级）
