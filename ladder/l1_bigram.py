@@ -8,15 +8,22 @@
     第 i 行 = 「当前字符是 i 时，下一个字符该给多少分」
 之所以叫 bigram，是因为预测下一个字符时只用了「紧邻的前 1 个」字符。
 
-本文件只留了两个 TODO：forward 和 generate。
-训练循环、评测、采样演示都写好了——那一层不是 L1 要学的东西。
+★ 关于语料：这一级用 tinyshakespeare（英文，只有 65 种字符）。
+  不是因为它"重要"，而是因为它小到能一眼看穿、跑几十秒就出结果，
+  而且和 Karpathy 的视频完全对得上。
+  换成中文语料（4,754 种字符）会让这张表变成 4,754² = 2260 万参数，
+  学到的东西性质完全一样，只是慢几十倍 —— 所以先在这里把架构搞懂，
+  到 L6 再整体换回中文。
+  （再推一步：BPE 16k 词表的 bigram 表是 16384² = 2.68 亿参数。
+    撑不住 —— 这就是必须有 L2 注意力的原因：词表一大，直接查表就爆炸，
+    必须靠"低维表示 + 注意力"共享参数。）
 
 运行:
     py ladder/l1_bigram.py
 
 验收标准（三条都满足才算过）:
     1. 训练 loss 从 4.174 明显下降，落到 2.5 附近
-    2. val loss 同步下降（说明模型学到了通用规律，不是死记硬背训练数据）
+    2. val loss 同步下降（说明学到了通用规律，不是死记硬背训练数据）
     3. 生成的文本「像英文但没意义」—— 这就对了，Bigram 只能做到这一步
 """
 
@@ -56,68 +63,88 @@ class BigramLanguageModel(nn.Module):
         super().__init__()          # 必须调父类构造，否则参数注册不生效
         # 唯一的参数：一张 (vocab_size, vocab_size) 的表
         # nn.Embedding(V, V) 的第 i 行就是「下一个字符的评分向量」
+        # 注意：这里 embedding 维度 == vocab_size，不是巧合 ——
+        #       因为我们就是要为每个可能的「下一个字符」各存一个分数。
         self.token_embedding_table = nn.Embedding(vocab_size, vocab_size)
 
     # --------------------------------------------------------
-    # TODO 1：前向
+    # 前向
     # --------------------------------------------------------
     def forward(self, idx, targets=None):
         """算出每个位置对「下一个字符」的评分，以及损失。
 
-        参数
-            idx     : (B, T) 整数张量 —— B 个样本，每个 T 个字符
-            targets : (B, T) 整数张量，或 None（只推理、不算损失时）
+        idx     : (B, T) 整数张量 —— B 个样本，每个 T 个字符
+        targets : (B, T) 整数张量，或 None（只推理、不算损失时）
 
-        返回
-            logits  : (B, T, vocab_size)
-            loss    : 标量张量；targets 为 None 时是 None
-
-        提示
-            1. 查表：logits = self.token_embedding_table(idx)
-               因为表本身就是 (V, V)，查出来的直接就是「下一个字符的评分」。
-            2. **cross_entropy 只吃二维输入**（样本数, 类别数）。
-               现在 logits 是三维 (B, T, C)，targets 是二维 (B, T)。
-               要先拍平：
-                   logits  -> (B*T, C)     用 .view(-1, C)
-                   targets -> (B*T,)       用 .view(-1)
-               （-1 的意思是「这一维你自己算出来」。B*T 个位置，
-                 每个位置都是一次独立的「预测下一个字符」，所以可以拍平。）
-            3. loss = F.cross_entropy(拍平后的 logits, 拍平后的 targets)
-            4. targets 是 None 时不要算 loss，直接 return logits, None
+        返回 logits (B, T, C) 和 loss（targets 为 None 时 loss 是 None）
         """
-        raise NotImplementedError("TODO 1：把 forward 写完")
+        # ① 查表。idx 是 (B, T)，每个元素都是 0..64 的下标；
+        #    Embedding 会把每个下标换成表里对应的那一行（长度 65 的向量）。
+        #    (B, T) --查表--> (B, T, C)，C = vocab_size = 65
+        logits = self.token_embedding_table(idx)
+
+        # ② 只推理不算损失时，直接返回
+        if targets is None:
+            return logits, None
+
+        # ③ cross_entropy 只接受二维输入「(样本数, 类别数)」，
+        #    所以要把三维的 logits 拍平。
+        B, T, C = logits.shape
+        logits = logits.view(B * T, C)      # (B, T, C) -> (B*T, C)
+        targets = targets.view(B * T)       # (B, T)    -> (B*T,)
+
+        #    为什么可以拍平？因为语言模型把「每个位置预测下一个字符」
+        #    当成一次独立的多分类任务，一共 B*T 个任务，各自算一次交叉熵，
+        #    再取平均。拍平只是把它们摞在一起一次性算完。
+        #
+        #    .view() 要求内存连续；万一某步拿到的是非连续张量会报错，
+        #    那时改用 .reshape() 即可（它会自动复制成连续再变形）。
+        loss = F.cross_entropy(logits, targets)
+        return logits, loss
 
     # --------------------------------------------------------
-    # TODO 2：采样生成
+    # 采样生成
     # --------------------------------------------------------
     @torch.no_grad()
     def generate(self, idx, max_new_tokens):
         """自回归采样：一次生成一个字符，接到末尾，再喂回自己。
 
-        这个 @torch.no_grad() 是说「这段不需要算梯度」——
-        推理时没有反向传播，关掉梯度能省一半显存、快不少。
+        @torch.no_grad() 是说「这段不算梯度」——
+        推理时没有反向传播，关掉梯度能省显存、也更快。
 
         idx : (B, T) 起始上下文
         返回: (B, T + max_new_tokens)
-
-        循环 max_new_tokens 次，每一步：
-            1. logits, _ = self(idx)                前向
-            2. logits = logits[:, -1, :]            只留最后一个位置 -> (B, C)
-               为什么只要最后一个：上下文里更早的位置预测的是它们各自的
-               「下一个」，我们只关心当前位置的下一个字符。
-            3. probs = F.softmax(logits, dim=-1)    把评分变成概率
-            4. idx_next = torch.multinomial(probs, num_samples=1)
-               按概率**随机抽一个**（不是取最大的那个！取最大就是贪心，容易复读）
-            5. idx = torch.cat([idx, idx_next], dim=1)   接到序列末尾，进入下一轮
-
-        注意两个 dim：softmax 要沿「类别」那一维（dim=-1），
-        cat 要沿「时间」那一维（dim=1）。写错**不会报错**，但结果全乱。
         """
-        raise NotImplementedError("TODO 2：把 generate 写完")
+        for _ in range(max_new_tokens):
+            # ① 前向，拿到 (B, T, C)
+            logits, _ = self(idx)
+
+            # ② 只留最后一个位置 -> (B, C)
+            #    上下文里更早的位置预测的是它们各自的「下一个」，
+            #    我们现在只关心「整个上下文之后」的下一个字符。
+            logits = logits[:, -1, :]
+
+            # ③ 把评分变成概率分布（每行加起来等于 1）
+            probs = F.softmax(logits, dim=-1)
+
+            # ④ 按概率随机抽一个下标 -> (B, 1)
+            #    注意不是 argmax！取最大值是"贪心"，模型会一直重复同一句话。
+            #    按概率抽才能有多样性。
+            idx_next = torch.multinomial(probs, num_samples=1)
+
+            # ⑤ 接到序列末尾 -> (B, T+1)，进入下一轮
+            idx = torch.cat([idx, idx_next], dim=1)
+
+        return idx
+
+    # ⚠️ 留意这里的效率问题：每生成一个字符，都要把整个上下文重新前向一遍
+    #    （第 ① 步），所以总计算量是 O(T²)。上下文一长就慢得离谱。
+    #    这正是阶段 5 要做的 **KV Cache** 解决的 —— 缓存已经算过的 K/V，
+    #    新字符只算增量，能快十几倍。现在先记住这个坑。
 
 
 # ============================================================
-# 训练循环（已给全，L1 不考这个）
+# 训练循环（不属于 L1 的学习目标，直接给全）
 # ============================================================
 def estimate_loss(model, eval_iters=50):
     """在 train / val 上各算若干批的平均 loss。
@@ -168,7 +195,7 @@ def main():
     print(f"  随机基线   = 4.174   （ln 65，必须打败它）")
 
     print("\n=== 生成 300 个字符 ===")
-    # 用一个全 0 的上下文起步（token id 0 是本语料里最小的字符，通常是换行）
+    # 用一个全 0 的上下文起步（token id 0 是本语料里最小的字符）
     context = torch.zeros((1, 1), dtype=torch.long, device=L0.device)
     out_ids = model.generate(context, max_new_tokens=300)[0].tolist()
     print(L0.decode(out_ids))
