@@ -67,7 +67,7 @@ data = torch.tensor(encode(text), dtype=torch.long)
 n = int(0.9 * len(data))
 train_data, val_data = data[:n], data[n:]
 print(f"训练集 {len(train_data):,} token / 验证集 {len(val_data):,} token")
-
+device = "cuda" if torch.cuda.is_available() else "cpu"
 block_size = 8     # 上下文长度：用前 8 个字符预测第 9 个
 batch_size = 4     # 一次取 4 段
 torch.manual_seed(42)
@@ -90,11 +90,14 @@ def get_batch(split: str) -> tuple[torch.Tensor, torch.Tensor]:
         x = torch.stack([d[s : s + block_size] for s in starts])
         y = torch.stack([d[s + 1 : s + 1 + block_size] for s in starts])
         注意起点范围要留够 block_size + 1 的长度，别越界。
-
-    TODO: 你来写
     """
-    raise NotImplementedError("把 get_batch 写完")
+    d = train_data if split == "train" else val_data
+    ix = torch.randint(len(d) - block_size,(batch_size,))
+    x = torch.stack([d[i:i+block_size] for i in ix])
+    y = torch.stack([d[i+1:i+block_size+1] for i in ix])
 
+    x,y = x.to(device),y.to(device)
+    return x,y
 
 # ============================================================
 # 自检
