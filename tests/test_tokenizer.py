@@ -32,12 +32,19 @@ def tok():
 # ============================================================
 # 基本信息
 # ============================================================
-def test_vocab_size(tok):
-    assert tok.vocab_size == 16384
+def test_vocab_size_fits_uint16(tok):
+    """词表必须装得进 uint16 —— 阶段 3 要把 token 存成 uint16 的 .bin。
+
+    这是硬约束，不是魔数：UINT16_MAX = 65535，超了就得换 uint32，
+    数据体积直接翻倍。写死 "== 16384" 反而脆弱：换 --vocab-size 重训就红。
+    """
+    assert 1024 <= tok.vocab_size <= 65535, (
+        f"词表 {tok.vocab_size} 超出 uint16 范围，阶段 3 的 .bin 会装不下"
+    )
 
 
 def test_special_tokens_have_distinct_ids(tok):
-    ids = [tok._tok.token_to_id(s) for s in SPECIAL_TOKENS]
+    ids = [tok.token_to_id(s) for s in SPECIAL_TOKENS]
     assert all(i is not None for i in ids), "有特殊 token 没注册进词表"
     assert len(set(ids)) == len(SPECIAL_TOKENS), "特殊 token 的 id 撞车了"
 
@@ -47,7 +54,9 @@ def test_special_tokens_are_not_split(tok):
     for s in SPECIAL_TOKENS:
         ids = tok.encode(s)
         assert len(ids) == 1, f"{s} 被拆成了 {len(ids)} 个 token"
-        assert tok.decode(ids) == s or s == tok._tok.decode(ids, skip_special_tokens=False)
+        # decode 默认 skip_special_tokens=True，会把特殊 token 抹掉（返回空串），
+        # 所以必须显式要求保留，才能验证编进去的确实是原字符串
+        assert tok.decode(ids, skip_special_tokens=False) == s
 
 
 # ============================================================

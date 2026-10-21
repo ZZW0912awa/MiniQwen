@@ -9,8 +9,9 @@
 为什么不用 scripts/bpe_from_scratch.py 那份
 ------------------------------------------
 那份是**教学版**：算法全手写，看得清每一步。但它有两个硬伤：
-  1. encode() 是「对每段文本重放 4744 条合并规则」= O(合并数 × 文本长度)，
-     528 万字在纯 Python 下根本跑不完；
+  1. encode() 是「对每段文本重放 4744 条合并规则」= O(合并数 × 文本长度)。
+     实测 2000 字要 0.9 秒，按线性外推到 528 万字约 39 分钟 —— 能跑完，
+     但每换一次语料就得等 40 分钟，根本没法迭代；
   2. 它的增量 pair 计数在相邻合并时会重复计数（tests/test_bpe_counts.py 钉着）。
 所以生产版换成 Rust 实现的 tokenizers 库。**算法是同一个算法**，
 区别只在实现语言和性能。
@@ -26,10 +27,8 @@
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 import time
-from collections import Counter
 from pathlib import Path
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -76,20 +75,19 @@ def train_tokenizer(corpus_path: Path, vocab_size: int, out_path: Path):
     print(f"训练 BPE：词表目标 {vocab_size}（含 {len(SPECIAL_TOKENS)} 个特殊 token）")
     t0 = time.perf_counter()
     tok.train_from_iterator(corpus_iter(), trainer=trainer)
-    print(f"  用时 {time.perf_counter() - t0:.1f} 秒")
+    train_sec = time.perf_counter() - t0
+    print(f"  用时 {train_sec:.1f} 秒")
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     tok.save(str(out_path))
     print(f"  已保存 {out_path.relative_to(ROOT)}")
-    return tok
+    return tok, train_sec
 
 
 # ============================================================
 # 评估
 # ============================================================
 def evaluate(tok, corpus_path: Path, holdout_chars: int = 200_000) -> dict:
-    from tokenizers import Tokenizer
-
     text = corpus_path.read_text(encoding="utf-8")
     holdout = text[-holdout_chars:]          # 取末尾一段当留出样本
 
@@ -162,6 +160,7 @@ def compare_with_legacy(corpus_path: Path, new_tok, sample_chars: int = 2000) ->
     n_bytes = len(sample.encode("utf-8"))
     return {
         "sample_chars": len(sample),
+        "total_chars": len(text),        # 语料总字数，用于外推旧版全量编码耗时
         "n_bytes": n_bytes,
         "legacy_tokens": len(legacy_ids),
         "legacy_bytes_per_token": n_bytes / len(legacy_ids),
@@ -187,7 +186,7 @@ def main():
         print("先跑：py scripts/build_corpus.py data/raw data/processed", file=sys.stderr)
         return 1
 
-    tok = train_tokenizer(corpus_path, args.vocab_size, out_path)
+    tok, train_sec = train_tokenizer(corpus_path, args.vocab_size, out_path)
 
     print("\n=== 评估 ===")
     m = evaluate(tok, corpus_path)
@@ -197,11 +196,6 @@ def main():
     print(f"  编解码往返无损: {'是 [OK]' if m['lossless'] else '否 [FAIL]'}")
     print(f"  文本块 token 数：P50={m['chunk_p50']:,}  P90={m['chunk_p90']:,}"
           f"  P99={m['chunk_p99']:,}")
-
-    # 特殊 token 的 id
-    ids_line = []
-    for s in SPECIAL_TOKENS:
-        ids_line.append(f"`{s}`={tok.token_to_id(s)}")
 
     # 与旧版从零实现的对比
     print("\n=== 与旧版（从零实现，词表 5000）对比压缩率 ===")
@@ -256,10 +250,15 @@ def main():
                      "差异不能全归给词表大小。")
         lines.append(">")
         lines.append("> 但它仍说明一件事：旧的从零版 `encode()` 是 "
-                     "O(合并数 × 文本长度)。实测 2000 字耗时 "
-                     f"{cmp['legacy_sec']:.1f}s，按线性外推到 528 万字约 "
-                     f"{cmp['legacy_sec'] * 5_280_000 / cmp['sample_chars'] / 60:.0f} 分钟；"
-                     "而新版**训练 + 编码整条流程一共 18.6 秒**。")
+                     "O(合并数 × 文本长度)。实测 "
+                     f"{cmp['sample_chars']:,} 字耗时 {cmp['legacy_sec']:.1f}s，"
+                     f"按线性外推到 {cmp['total_chars']:,} 字约需 "
+                     f"{cmp['legacy_sec'] * cmp['total_chars'] / cmp['sample_chars'] / 60:.0f} 分钟；"
+                     f"而新版**训练 + 编码整条流程一共 {train_sec:.1f} 秒**。")
+        lines.append(">")
+        lines.append("> ⚠️ 那个「分钟数」不要当真到个位：同一台机器上量它，"
+                     "两次运行能从 39 分钟变 53 分钟（负载波动就影响 30%+）。"
+                     "它只说明数量级——**小时级 vs 秒级**，这就够了。")
         lines.append(">")
         lines.append("> 差距不在算法（是同一个算法），而在实现："
                      "Python 纯解释执行 vs Rust 编译执行。")

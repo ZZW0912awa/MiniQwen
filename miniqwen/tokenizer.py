@@ -94,6 +94,15 @@ class NovelTokenizer:
         """id 列表 → 文本。skip_special_tokens=True 会把特殊 token 藏起来。"""
         return self._tok.decode(ids, skip_special_tokens=skip_special_tokens)
 
+    def token_to_id(self, token: str) -> int | None:
+        """查某个 token 的 id；词表里没有就返回 None。
+
+        为什么要暴露这个方法：上层（测试、数据检查、以后的 SFT 脚本）
+        需要按名字查 id，但不该直接摸底层的 _tok —— 那是实现细节，
+        换了 tokenizer 实现就得跟着改。
+        """
+        return self._tok.token_to_id(token)
+
     # ---------------- 对话模板（SFT 阶段用）----------------
     def apply_chat_template(
         self,
@@ -119,7 +128,7 @@ class NovelTokenizer:
             parts.append(f"{response}{IM_END}\n")
         return "".join(parts)
 
-    def encode_chat(self, instruction: str, response: str) -> list[int]:
+    def encode_chat(self, instruction: str, response: str) -> tuple[list[int], list[int]]:
         """对话 → id，并且**只对 assistant 的回答算 loss**。
 
         做法是把提示词部分的标签设成 -100（PyTorch 的 ignore_index），
